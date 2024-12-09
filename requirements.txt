@@ -1,0 +1,6 @@
+-e .
+pytest
+black
+flake8
+parameterized
+ipykernel

@@ -1,0 +1,41 @@
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mw-fdtd"
+version = "0.0.1"
+description = "moving window FDTD solver"
+readme = "README.md"
+authors = [{ name = "Rick Lyon", email = "rlyon14@gmail.com" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["fdtd", "em", "propagation"]
+dependencies = [
+    "matplotlib>=3.9.0",
+    "numpy",
+    "scipy",
+    "ipykernel",
+    "pillow",
+    "pyqt5",
+]
+requires-python = ">=3.7"
+
+[project.optional-dependencies]
+dev = [
+    "black", 
+    "flake8", 
+    "pytest", 
+    "bumpversion", 
+    "parameterized",  
+]
+
+[tool.setuptools.packages.find]
+include = ["mw_fdtd"]
+
+[project.urls]
+repository = "https://github.com/ricklyon/mw_fdtd"

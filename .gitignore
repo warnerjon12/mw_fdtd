@@ -1,0 +1,6 @@
+*.pypirc
+/mw_fdtd.egg-info
+/.venv
+/debug
+/dist
+__pycache__/
