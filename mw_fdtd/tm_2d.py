@@ -338,15 +338,6 @@ class FDTD_TM_2D(object):
 
         return [top, right, btm, left]
 
-    def get_window_fields(self, field_val, field_loc, order=4):
-        """
-        Interpolates field_val at the field_loc points. Useful for comparing the moving window fields with a larger
-        static grid. 
-        """
-
-        return ndimage.map_coordinates(
-            field_val, np.array([field_loc[0], field_loc[2]]), mode="constant", cval=0, order=order
-        )
 
     def compute_fdtd_coeff(self):
         sigmax_m_hy = self.sigmax_hy * (u0 / self.epsilon_hy)
@@ -375,7 +366,8 @@ class FDTD_TM_2D(object):
         width_n: int,
         sf_wx = 30,
         sf_wz = 30,
-        mx=12,
+        mx=2,
+        mz=2
     ):
         """
         Create a total field/ scattered field boundary using a 1D plane wave source.
@@ -404,7 +396,7 @@ class FDTD_TM_2D(object):
         # center of the pulse in time
         t0 = (self.dt * (width_n // 2))
 
-        mz = int(np.around(np.clip(mx * np.tan(np.deg2rad(phi)), 1, 40)))
+        # mz = int(np.around(np.clip(mx * np.tan(np.deg2rad(phi)), 1, 40)))
         phi_rad = np.arctan(mz/mx)
 
         px = np.cos(phi_rad)
@@ -651,6 +643,9 @@ class FDTD_TM_2D(object):
             for s in self.sources:
                 x_s = s["loc"][0].astype(int) - self.shift_x
                 z_s = s["loc"][2].astype(int)
+                if mw_border is not None and np.min(x_s) < mw_border:
+                    continue
+
                 ex[x_s, z_s] -= (self.dt / self.epsilon_ex[x_s, z_s]) * s["x"][n]
                 ez[x_s, z_s] += (self.dt / self.epsilon_ez[x_s, z_s]) * s["z"][n]
 
