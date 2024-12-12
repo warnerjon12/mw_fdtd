@@ -2,9 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt 
 from PIL import Image
 import io
-from scipy import ndimage
-from scipy.spatial.transform import Rotation
-from scipy.interpolate import CubicSpline, RegularGridInterpolator
 from scipy.signal import windows
 import sys
 
@@ -13,7 +10,7 @@ from IPython.display import Image as ipyimage
 from pathlib import Path
 
 from mw_fdtd import FDTD_TM_2D
-from mw_fdtd.plotting import plot_field, get_window_fields
+from mw_fdtd.plotting import get_window_fields
 from mw_fdtd.utils import conv, const
 
 dir_ = Path(__file__).parent
@@ -33,7 +30,7 @@ f0 = 2e9
 
 
 rotation = 20
-rotation_s_n=950
+capture_n=800
 
 grid = FDTD_TM_2D(imax, kmax, nmax, fmax)
 
@@ -49,15 +46,15 @@ mw_grid.set_er_profile(np.arange(kmax), er_gradient)
 mw_grid.rotate_grid(20, init=True)
 mw_grid.add_soft_source(f0, 150, 150, 240, 20, axis="z")
 mw_grid.add_pml_all_sides(50)
+mw_grid.set_capture(capture_n, nmax, imax_mw - 50, rotation=-20)
 
-n_step = 20
+n_step = 10
 n_save = nmax // n_step
 
 ez_fg = np.zeros((n_save,) + grid.ez_shape, dtype=grid.dtype)
 mw_outline = []
 ez_mw = np.zeros((n_save,) + mw_grid.ez_shape, dtype=grid.dtype)
 ez_loc = np.zeros((n_save, 3) + mw_grid.ez_shape, dtype=grid.dtype)
-# ez_mw_s = np.zeros((n_save,) + mw_grid_s.ez_shape, dtype=np.float32)
 
 
 def func_full(n, ex, ez, hy):
@@ -75,6 +72,27 @@ def func_mw(n, ex, ez, hy):
 
 grid.run(func_full)
 mw_grid.run(func_mw, mw_border=60)
+
+mw_grid_s = FDTD_TM_2D(imax_mw, kmax_mw, nmax, fmax)
+
+mw_grid_s.set_er_profile(np.arange(kmax), er_gradient)
+mw_grid_s.translate_grid_center(mw_grid.grid_center)
+mw_grid_s.rotate_grid(-20, init=True)
+mw_grid_s.add_tfsf_line_source(mw_grid.capture["ez_data"], mw_grid.capture["hy_data"], x0=imax_mw // 2)
+mw_grid_s.add_pml_all_sides(50)
+
+ez_mw_s = np.zeros((n_save,) + mw_grid_s.ez_shape, dtype=np.float32)
+mw_s_outline = []
+ez_s_loc = np.zeros((n_save, 3) + mw_grid_s.ez_shape, dtype=grid.dtype)
+
+def func_mw_s(n, ex, ez, hy):
+
+    if (n % n_step) == 0:
+        ez_mw_s[n // n_step] = ez
+        mw_s_outline.append(mw_grid_s.get_grid_outline())
+        ez_s_loc[n // n_step] = np.array(mw_grid_s.ez_loc)
+
+mw_grid_s.run(func_mw_s, mw_border=60)
 
 # plots
 #%%
@@ -122,11 +140,9 @@ pcm = []
 
 outline_ln = []
 
-field = np.where(np.abs(ez_fg) < 1e-16, 1e-16, ez_fg)
-ez_fg_db = conv.db20_v(field)
-
-field = np.where(np.abs(ez_mw) < 1e-16, 1e-16, ez_mw)
-ez_mw_db = conv.db20_v(field)
+ez_fg_db = conv.db20_v(np.where(np.abs(ez_fg) < 1e-16, 1e-16, ez_fg))
+ez_mw_db = conv.db20_v(np.where(np.abs(ez_mw) < 1e-16, 1e-16, ez_mw))
+ez_mw_s_db = conv.db20_v(np.where(np.abs(ez_mw_s) < 1e-16, 1e-16, ez_mw_s))
 
 z_loc, x_loc = np.meshgrid(np.arange(ez_fg_db.shape[2]), np.arange(ez_fg_db.shape[1]))
 zw_loc, xw_loc = np.meshgrid(np.arange(ez_mw_db.shape[2]), np.arange(ez_mw_db.shape[1]))
@@ -138,17 +154,30 @@ for n in range(n_save):
     pcm.clear()
     outline_ln.clear()
 
+    n_s = n - (capture_n // n_step)
+
     pcm1 = ax1.pcolormesh(x_loc, z_loc, ez_fg_db[n], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
-    mw_field = get_window_fields(ez_fg_db[n], ez_loc[n])
-    pcm3 = ax3.pcolormesh(xw_loc, zw_loc, mw_field, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
+
     pcm2 = ax2.pcolormesh(xw_loc, zw_loc, ez_mw_db[n], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
+    if n_s >= 0:
+        pcm4 = ax4.pcolormesh(xw_loc, zw_loc, ez_mw_s_db[n_s], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
+        outline_ln += [ax1.plot(w[0], w[2], color="r", linewidth=2)[0] for w in mw_s_outline[n_s]]
+        pcm.append(pcm4)
 
-    outline_ln += [ax1.plot(w[0], w[2], color="k", linewidth=2)[0] for w in mw_outline[n]]
+        mw_field = get_window_fields(ez_fg_db[n], ez_s_loc[n_s])
+        
+    else:
+        outline_ln += [ax1.plot(w[0], w[2], color="r", linewidth=2)[0] for w in mw_s_outline[0]]
+        mw_field = get_window_fields(ez_fg_db[n], ez_loc[n])
+
+    outline_ln += [ax1.plot(w[0], w[2], color="g", linewidth=2)[0] for w in mw_outline[n]]
+
+    pcm3 = ax3.pcolormesh(xw_loc, zw_loc, mw_field, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
     
-
     pcm.append(pcm1)
     pcm.append(pcm2)
     pcm.append(pcm3)
+    
 
     buf = io.BytesIO()
 
@@ -159,7 +188,7 @@ for n in range(n_save):
     images.append(Image.open(buf))
 
 
-gifname = f"full_grid_solve.gif"
+gifname = f"full_grid_comparison.gif"
 images[0].save(
     gifname,
     format="GIF",

@@ -74,9 +74,9 @@ class FDTD_TM_2D(object):
 
         # locations of field components in grid cell units
         # origin is the bottom left of grid.
-        loc_mid_z = np.arange(0.5, kmax - 0.5, 1 )
+        loc_mid_z = np.arange(0.5, kmax - 0.5, 1)
         loc_end_z = np.arange(0, kmax, 1)
-        loc_mid_x = np.arange(0.5, imax - 0.5, 1 )
+        loc_mid_x = np.arange(0.5, imax - 0.5, 1)
         loc_end_x = np.arange(0, imax, 1)
 
         loc_ez_z, loc_ez_x = np.meshgrid(loc_mid_z, loc_end_x)
@@ -87,12 +87,16 @@ class FDTD_TM_2D(object):
         self.ez_loc = np.array([loc_ez_x, np.zeros(loc_ez_z.shape), loc_ez_z])
         self.hy_loc = np.array([loc_hy_x, np.zeros(loc_hy_z.shape), loc_hy_z])
 
+        self.ex_loc_static = self.ex_loc.copy()
+        self.ez_loc_static = self.ez_loc.copy()
+        self.hy_loc_static = self.hy_loc.copy()
+
         self.ex_shape = self.ex_loc.shape[1:]
         self.ez_shape = self.ez_loc.shape[1:]
         self.hy_shape = self.hy_loc.shape[1:]
 
         # location of the physical center of the grid
-        self.grid_center = np.array([int((self.imax - 1) / 2), 0, int((self.kmax - 1) / 2)])
+        self.grid_center = np.array([int((self.imax - 1) / 2), 0, int((self.kmax - 1) / 2)], dtype=np.float64)
 
         # initialize permittivity
         self.epsilon_ex = np.ones(self.ex_shape) * e0
@@ -117,6 +121,8 @@ class FDTD_TM_2D(object):
             sf_wz=0,
             sf_wx=0
         )
+
+        self.capture = None
 
     def add_soft_source(
         self, 
@@ -234,9 +240,9 @@ class FDTD_TM_2D(object):
         pml_origin = np.array([self.imax - d_pml, self.kmax - d_pml])[..., None, None]
 
         # get projected distance from the origin along the k vector
-        d_pml_ex = np.einsum("i, i...->...", np.array(pml_k), self.ex_loc[::2] - pml_origin)
-        d_pml_ez = np.einsum("i, i...->...", np.array(pml_k), self.ez_loc[::2] - pml_origin)
-        d_pml_hy = np.einsum("i, i...->...", np.array(pml_k), self.hy_loc[::2] - pml_origin)
+        d_pml_ex = np.einsum("i, i...->...", np.array(pml_k), self.ex_loc_static[::2] - pml_origin)
+        d_pml_ez = np.einsum("i, i...->...", np.array(pml_k), self.ez_loc_static[::2] - pml_origin)
+        d_pml_hy = np.einsum("i, i...->...", np.array(pml_k), self.hy_loc_static[::2] - pml_origin)
 
         if side == "lower":
             d_pml_ex = np.flip(d_pml_ex, axis=(0, 1))
@@ -274,7 +280,7 @@ class FDTD_TM_2D(object):
         grid_center = self.grid_center[..., None, None]
         
         # rotate the grid locations around the grid center 
-        rot = Rotation.from_euler("xyz", (0, rotation, 0), degrees=True).as_matrix()
+        rot = Rotation.from_euler("xyz", (0, -rotation, 0), degrees=True).as_matrix()
         self.ex_loc = np.einsum("ij,j...->i...", rot, self.ex_loc - grid_center) + grid_center
         self.ez_loc = np.einsum("ij,j...->i...", rot, self.ez_loc - grid_center) + grid_center
         self.hy_loc = np.einsum("ij,j...->i...", rot, self.hy_loc - grid_center) + grid_center
@@ -294,7 +300,7 @@ class FDTD_TM_2D(object):
 
         if init:
             self.init_rotation = rotation
-
+    
     def shift_mw(self, shift_x: int):
         """
         Shifts the FDTD grid to the right by shift_x. Must be an integer.
@@ -306,7 +312,7 @@ class FDTD_TM_2D(object):
 
         self.shift_x += shift_x
         
-        shift_v = np.array([step_x, 0, step_z], dtype=self.grid_center.dtype)
+        shift_v = np.array([step_x, 0, step_z])
         self.grid_center += shift_v
         
         # increment the x and z location of each field
@@ -331,10 +337,10 @@ class FDTD_TM_2D(object):
         """
         Returns the grid cell locations of the grid boundaries.
         """
-        top = self.ex_loc[:, :, -1]
-        btm = self.ex_loc[:, :, 0]
-        left = self.ez_loc[:, 0, :]
-        right = self.ez_loc[:, -1, :]
+        top = self.ex_loc[:, :, -1].copy()
+        btm = self.ex_loc[:, :, 0].copy()
+        left = self.ez_loc[:, 0, :].copy()
+        right = self.ez_loc[:, -1, :].copy()
 
         return [top, right, btm, left]
 
@@ -367,7 +373,6 @@ class FDTD_TM_2D(object):
         sf_wx = 30,
         sf_wz = 30,
         mx=2,
-        mz=2
     ):
         """
         Create a total field/ scattered field boundary using a 1D plane wave source.
@@ -396,7 +401,7 @@ class FDTD_TM_2D(object):
         # center of the pulse in time
         t0 = (self.dt * (width_n // 2))
 
-        # mz = int(np.around(np.clip(mx * np.tan(np.deg2rad(phi)), 1, 40)))
+        mz = int(np.around(np.clip(mx * np.tan(np.deg2rad(phi)), 1, 40)))
         phi_rad = np.arctan(mz/mx)
 
         px = np.cos(phi_rad)
@@ -499,6 +504,56 @@ class FDTD_TM_2D(object):
         self.tfsf["sf_wx"] = sf_wx
         self.tfsf["sf_wz"] = sf_wz
 
+    def add_tfsf_line_source(self, ez, hy, x0):
+        self.tfsf = dict()
+        self.tfsf["hy_left"] = hy.copy()
+        self.tfsf["ez_left"] = ez.copy()
+        self.tfsf["sf_wx"] = x0
+        self.tfsf["sf_wz"] = 0
+
+    def set_capture(self, n_start, n_stop, x0, rotation=0):
+        rot_s = Rotation.from_euler("xyz", (0, -rotation, 0), degrees=True).as_matrix()
+
+        center_m = np.array([int((self.imax - 1) // 2), 0, int((self.kmax - 1) // 2)])[..., None]
+        ez_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.ez_loc_static)[:, x0] - center_m) + center_m
+        hy_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.hy_loc_static)[:, x0-1] - center_m) + center_m
+
+        # convert to indices, first location of hy is offset by half a grid cell in z and x axis
+        hy_capture_loc -= np.array([0.5, 0, 0.5])[..., None]
+        # convert to indices, first location of ez is offset by half a grid cell in z axis
+        ez_capture_loc -= np.array([0, 0, 0.5])[..., None]
+
+        # only x and z locations are used for interpolation, remove y
+        hy_capture_loc = hy_capture_loc[0::2]
+        ez_capture_loc = ez_capture_loc[0::2]
+
+        n_duration = n_stop - n_start
+        self.capture = dict(
+            n_start=n_start, 
+            n_stop=n_stop, 
+            hy_loc=hy_capture_loc, 
+            ez_loc=ez_capture_loc, 
+            rotation=rotation, 
+            hy_data=np.zeros((n_duration,) + hy_capture_loc.shape[1:]),
+            ez_data=np.zeros((n_duration,) + ez_capture_loc.shape[1:])
+        )
+
+    def translate_grid_center(self, position):
+
+        translate = position - self.grid_center
+
+        self.grid_center += translate
+        
+        self.ex_loc += translate[..., None, None]
+        self.ez_loc += translate[..., None, None]
+        self.hy_loc += translate[..., None, None]
+
+        if self.er_profile is not None:
+            profile, axis_idx = self.er_profile
+            self.epsilon_ex = profile(self.ex_loc[axis_idx]) * e0
+            self.epsilon_ez = profile(self.ez_loc[axis_idx]) * e0
+            self.epsilon_hy = profile(self.hy_loc[axis_idx]) * e0
+
     def run(self, iter_func = None, mw_border=None):
         K_AXIS = 1
         I_AXIS = 0
@@ -506,22 +561,20 @@ class FDTD_TM_2D(object):
         imax = self.imax
         kmax = self.kmax
 
-        Ca_x, Ca_z, Cb_x, Cb_z, Da_x, Da_z, Db_x, Db_z = self.compute_fdtd_coeff()
-
         ez = np.zeros((imax, kmax - 1), dtype=self.dtype)
         ex = np.zeros((imax - 1, kmax), dtype=self.dtype)
         hyx = np.zeros((imax - 1, kmax -1), dtype=self.dtype)
         hyz = np.zeros((imax - 1, kmax -1), dtype=self.dtype)
 
         # tfsf boundary fields
-        ex_top = self.tfsf["ex_top"]
-        ex_btm = self.tfsf["ex_btm"]
-        ez_left = self.tfsf["ez_left"]
-        ez_right = self.tfsf["ez_right"]
-        hy_top = self.tfsf["hy_top"]
-        hy_btm = self.tfsf["hy_btm"]
-        hy_left = self.tfsf["hy_left"]
-        hy_right = self.tfsf["hy_right"]
+        ex_top = self.tfsf.get("ex_top", None)
+        ex_btm = self.tfsf.get("ex_btm", None)
+        ez_left = self.tfsf.get("ez_left", None)
+        ez_right = self.tfsf.get("ez_right", None)
+        hy_top = self.tfsf.get("hy_top", None)
+        hy_btm = self.tfsf.get("hy_btm", None)
+        hy_left = self.tfsf.get("hy_left", None)
+        hy_right = self.tfsf.get("hy_right", None)
 
         # width of the total field portion of the grid
         tfsf_tf_x = self.imax - (2 * self.tfsf["sf_wx"])
@@ -533,14 +586,36 @@ class FDTD_TM_2D(object):
         tfsf_z0 = self.tfsf["sf_wz"]
         tfsf_z1 = tfsf_z0 + tfsf_tf_z -1
 
+        if self.tfsf["sf_wx"] != 0:
+            self.shift_mw(self.imax - 60 - tfsf_x0)
+
+        Ca_x, Ca_z, Cb_x, Cb_z, Da_x, Da_z, Db_x, Db_z = self.compute_fdtd_coeff()
+
         h_tfsf_x_clip = tfsf_tf_x - (tfsf_x1 - tfsf_x0) - 1
+
+        start_capture, end_capture = self.nmax, self.nmax
+
+        if self.capture is not None:
+            start_capture, end_capture = self.capture["n_start"], self.capture["n_stop"]
+            rot_rad_s = np.deg2rad(self.capture["rotation"])
+            mkwargs = dict(mode="constant", cval=0, order=3)
         
         for n in range(self.nmax-1):
             
-            if mw_border is not None:
-                energy_grid = np.sqrt(np.abs(ex[-mw_border:,  1:])**2 + np.abs(ez[-mw_border, : ])**2)
-                energy_at_right = np.any(energy_grid > 1e-6) 
+            if n > start_capture and n < end_capture:
+                n_c = n - start_capture
+                ez_inc_left_z = ndimage.map_coordinates(ez, self.capture["ez_loc"], **mkwargs)
+                ez_inc_left_x = ndimage.map_coordinates(ex, self.capture["ez_loc"], **mkwargs)
 
+                self.capture["ez_data"][n_c] = (-ez_inc_left_x * np.sin(rot_rad_s) + ez_inc_left_z * np.cos(rot_rad_s))
+                self.capture["hy_data"][n_c] = ndimage.map_coordinates(hyx + hyz, self.capture["hy_loc"], **mkwargs)
+                # cancel the moving window once a capture starts
+                mw_border = None
+
+            elif mw_border is not None:
+                energy_grid = np.sqrt(np.abs(ex[-mw_border:,  1:])**2 + np.abs(ez[-mw_border, :])**2)
+                energy_at_right = np.any(energy_grid > 1e-6)
+        
                 # shift window one cell to the right, dt ensures that energy can't make it from
                 # one cell to the next in a single time step, so moving one cell at a time should
                 # keep the pulse in the window
@@ -597,7 +672,7 @@ class FDTD_TM_2D(object):
                 # subtract incident field to remove it from the update equation
                 hyz[tfsf_x0:tfsf_x1, tfsf_z1] -= Db_z[tfsf_x0:tfsf_x1, tfsf_z1] * ex_top[n, h_tfsf_x_clip:]
 
-            if ez_left is not None:            
+            if ez_left is not None and n < len(ez_left) -1:            
                 # the hy component to the left of the total field in the scattered region uses a ez value in the total region,
                 # subtract incident field
                 hyx[tfsf_x0 -1, tfsf_z0:tfsf_z1] -= Db_x[tfsf_x0, tfsf_z0:tfsf_z1] * ez_left[n]
@@ -629,7 +704,7 @@ class FDTD_TM_2D(object):
             # leave the edge cells along x direction (i) at zero (PEC)
             ez[1:-1] = Ca_x[1:-1] * ez[1:-1] + Cb_x[1:-1] * np.diff(hy, axis=I_AXIS)
 
-            if hy_left is not None:
+            if hy_left is not None and n < len(hy_left) -1:
                 # the ez component on the left boundary of the tfsf region uses a hy component in the scattered region.
                 # add the incident field value 
                 ez[tfsf_x0, tfsf_z0:tfsf_z1] -= Cb_x[tfsf_x0 -1, tfsf_z0:tfsf_z1] * hy_left[n+1]
