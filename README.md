@@ -1,6 +1,6 @@
 # mw-fdtd
 
-Moving window FDTD implementation. Window can follow arbitrary paths through a geometry. 
+Moving window FDTD implementation (work in progress). Window can follow arbitrary paths through a geometry.
 
 ## Installation
 
@@ -14,4 +14,10 @@ pip install -r requirements.txt
 
 ```python
 import mw_fdtd
+```
+
+This script demonstrates a simple moving window example and shows a side by side comparison with a non-moving grid,
+
+```bash
+python scripts/mw_comparison.py
 ```
