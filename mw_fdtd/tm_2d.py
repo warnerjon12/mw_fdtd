@@ -68,7 +68,7 @@ class FDTD_TM_2D(object):
         self.sources = []
         self.tfsf = None
         self.er_profile = None
-        self.init_rotation = 0
+
         self.grid_rotation = 0
         self.shift_x = 0
 
@@ -165,13 +165,13 @@ class FDTD_TM_2D(object):
         source_loc = np.zeros((3, length))
         source_loc[axis_idx[axis]] = np.arange(-(length // 2), (length // 2) + 1, 1)[:length]
 
-        # rotate the source
-        rot = Rotation.from_euler("xyz", (0, self.init_rotation, 0), degrees=True)
+        # rotate the source locations, the source is rotated the opposite direction as the geometry
+        rot = Rotation.from_euler("xyz", (0, self.grid_rotation, 0), degrees=True)
         rot_m = rot.as_matrix()
         source_rloc = np.einsum("ij,j...->i...", rot_m, source_loc)
 
         # rotate the source polarization
-        rot_rad = np.deg2rad(self.init_rotation)
+        rot_rad = np.deg2rad(self.grid_rotation)
         if axis == "x":
             source_x = source_gms * np.cos(rot_rad)
             source_z = source_gms * np.sin(rot_rad)
@@ -270,7 +270,7 @@ class FDTD_TM_2D(object):
         self.add_pml(d_pml, coeff, direction="z", side="lower")
         self.add_pml(d_pml, coeff, direction="x", side="upper")
 
-    def rotate_grid(self, rotation: float, init: bool = False):
+    def rotate_grid(self, rotation: float):
         """
         Rotates the er profile around the y axis. FDTD time stepping will start with this rotation already applied.
         Invalidates all previously defined sources-- add sources after calling this method.
@@ -297,9 +297,6 @@ class FDTD_TM_2D(object):
         self.sources = []
 
         self.grid_rotation = rotation
-
-        if init:
-            self.init_rotation = rotation
     
     def shift_mw(self, shift_x: int):
         """
@@ -504,14 +501,37 @@ class FDTD_TM_2D(object):
         self.tfsf["sf_wx"] = sf_wx
         self.tfsf["sf_wz"] = sf_wz
 
-    def add_tfsf_line_source(self, ez, hy, x0):
+    def add_tfsf_line_source(self, ez, hy, x0, window=None):
+        """
+        Add a TFSF boundary on left edge of grid. Optionally apply a scipy.signal.window function
+        to attenuate the egdes near the PML.
+        """
+        if window is None:
+            window = np.ones_like(hy)
+        else:
+            window = np.broadcast_to(window(len(hy[0]))[None], hy.shape).copy()
+
         self.tfsf = dict()
-        self.tfsf["hy_left"] = hy.copy()
-        self.tfsf["ez_left"] = ez.copy()
+        self.tfsf["hy_left"] = window * hy.copy()
+        self.tfsf["ez_left"] = window * ez.copy()
         self.tfsf["sf_wx"] = x0
         self.tfsf["sf_wz"] = 0
 
     def set_capture(self, n_start, n_stop, x0, rotation=0):
+        """
+        Setup a TFSF capture on a verical line in the grid.
+
+        Parameters:
+        -----------
+        n_start: int
+            beginning time step of capture
+        n_stop: int
+            ending time step of capture
+        x0: int
+            x locatino of vertical line
+        rotation: float
+            rotation in degrees to rotate capture line by (around y axis)
+        """
         rot_s = Rotation.from_euler("xyz", (0, -rotation, 0), degrees=True).as_matrix()
 
         center_m = np.array([int((self.imax - 1) // 2), 0, int((self.kmax - 1) // 2)])[..., None]
@@ -539,15 +559,21 @@ class FDTD_TM_2D(object):
         )
 
     def translate_grid_center(self, position):
-
+        """
+        Moves the center of the grid to position (xyz vector)
+        """
+        # figure out how far to move the grid by taking the difference of the current location and the desired one
         translate = position - self.grid_center
 
+        # move the grid center
         self.grid_center += translate
         
+        # move each of the field locations
         self.ex_loc += translate[..., None, None]
         self.ez_loc += translate[..., None, None]
         self.hy_loc += translate[..., None, None]
 
+        # interpolate the er profile at the new grid cell locations
         if self.er_profile is not None:
             profile, axis_idx = self.er_profile
             self.epsilon_ex = profile(self.ex_loc[axis_idx]) * e0
@@ -586,15 +612,20 @@ class FDTD_TM_2D(object):
         tfsf_z0 = self.tfsf["sf_wz"]
         tfsf_z1 = tfsf_z0 + tfsf_tf_z -1
 
-        if self.tfsf["sf_wx"] != 0:
-            self.shift_mw(self.imax - 60 - tfsf_x0)
+        # correct for the delay caused by the TFSF source, advances the grid to catch up to the actual location
+        # of the fields.
+        if self.tfsf["sf_wx"] != 0 and mw_border is not None:
+            self.shift_mw(self.imax - tfsf_x0)
 
         Ca_x, Ca_z, Cb_x, Cb_z, Da_x, Da_z, Db_x, Db_z = self.compute_fdtd_coeff()
 
+        # number of tfsf grid cells in the x direction that are remaining as the source slides out of the grid.
+        # only used for bottom and top boundaries
         h_tfsf_x_clip = tfsf_tf_x - (tfsf_x1 - tfsf_x0) - 1
 
         start_capture, end_capture = self.nmax, self.nmax
 
+        # set up variables if there is a capture specified
         if self.capture is not None:
             start_capture, end_capture = self.capture["n_start"], self.capture["n_stop"]
             rot_rad_s = np.deg2rad(self.capture["rotation"])

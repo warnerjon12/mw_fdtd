@@ -21,3 +21,29 @@ This script demonstrates a simple moving window example and shows a side by side
 ```bash
 python scripts/mw_comparison.py
 ```
+
+A TM FDTD grid can be created with,
+```python
+from mw_fdtd import FDTD_TM_2D
+grid = FDTD_TM_2D(imax, kmax, nmax, fmax)
+```
+
+The runner calls a function at each time step that can be used for saving fields,
+```python
+n_step = 10
+def func_(n, ex, ez, hy):
+    # at every 10th time step, save the fields
+    if (n % n_step) == 0:
+        ez_fg[n // n_step] = ez
+
+# the mw_border parameters defines how 
+# many grid cells from the right edge field energy is allowed to 
+# extend before triggering a grid shift
+grid.run(func_, mw_border=60)
+```
+
+The moving window moves only in the positive x direction. To follow arbitrary trajectories, the grid can be rotated around the y-axis.
+This rotates the permittivity gradient, and subsequent sources.
+```python
+mw_grid.rotate_grid(45)
+```
