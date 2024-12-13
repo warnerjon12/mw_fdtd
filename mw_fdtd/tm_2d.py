@@ -166,12 +166,12 @@ class FDTD_TM_2D(object):
         source_loc[axis_idx[axis]] = np.arange(-(length // 2), (length // 2) + 1, 1)[:length]
 
         # rotate the source locations, the source is rotated the opposite direction as the geometry
-        rot = Rotation.from_euler("xyz", (0, self.grid_rotation, 0), degrees=True)
+        rot = Rotation.from_euler("xyz", (0, -self.grid_rotation, 0), degrees=True)
         rot_m = rot.as_matrix()
         source_rloc = np.einsum("ij,j...->i...", rot_m, source_loc)
 
         # rotate the source polarization
-        rot_rad = np.deg2rad(self.grid_rotation)
+        rot_rad = np.deg2rad(-self.grid_rotation)
         if axis == "x":
             source_x = source_gms * np.cos(rot_rad)
             source_z = source_gms * np.sin(rot_rad)
@@ -280,7 +280,7 @@ class FDTD_TM_2D(object):
         grid_center = self.grid_center[..., None, None]
         
         # rotate the grid locations around the grid center 
-        rot = Rotation.from_euler("xyz", (0, -rotation, 0), degrees=True).as_matrix()
+        rot = Rotation.from_euler("xyz", (0, rotation, 0), degrees=True).as_matrix()
         self.ex_loc = np.einsum("ij,j...->i...", rot, self.ex_loc - grid_center) + grid_center
         self.ez_loc = np.einsum("ij,j...->i...", rot, self.ez_loc - grid_center) + grid_center
         self.hy_loc = np.einsum("ij,j...->i...", rot, self.hy_loc - grid_center) + grid_center
@@ -303,7 +303,7 @@ class FDTD_TM_2D(object):
         Shifts the FDTD grid to the right by shift_x. Must be an integer.
         """
 
-        ang_rad = np.deg2rad(self.grid_rotation)
+        ang_rad = np.deg2rad(-self.grid_rotation)
         step_x = np.cos(ang_rad) * shift_x
         step_z = np.sin(ang_rad) * shift_x
 
@@ -532,11 +532,15 @@ class FDTD_TM_2D(object):
         rotation: float
             rotation in degrees to rotate capture line by (around y axis)
         """
-        rot_s = Rotation.from_euler("xyz", (0, -rotation, 0), degrees=True).as_matrix()
+        rot_s = Rotation.from_euler("xyz", (0, rotation, 0), degrees=True).as_matrix()
 
+        x0_c = (self.imax - 1) // 2
         center_m = np.array([int((self.imax - 1) // 2), 0, int((self.kmax - 1) // 2)])[..., None]
-        ez_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.ez_loc_static)[:, x0] - center_m) + center_m
-        hy_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.hy_loc_static)[:, x0-1] - center_m) + center_m
+        ez_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.ez_loc_static)[:, x0_c] - center_m) + center_m
+        hy_capture_loc = np.einsum("ij,j...->i...", rot_s, (self.hy_loc_static)[:, x0_c-1] - center_m) + center_m
+
+        ez_capture_loc += np.array([x0 - x0_c, 0, 0])[..., None]
+        hy_capture_loc += np.array([x0 - x0_c, 0, 0])[..., None]
 
         # convert to indices, first location of hy is offset by half a grid cell in z and x axis
         hy_capture_loc -= np.array([0.5, 0, 0.5])[..., None]
@@ -615,7 +619,7 @@ class FDTD_TM_2D(object):
         # correct for the delay caused by the TFSF source, advances the grid to catch up to the actual location
         # of the fields.
         if self.tfsf["sf_wx"] != 0 and mw_border is not None:
-            self.shift_mw(self.imax - tfsf_x0)
+            self.shift_mw(self.imax - mw_border - tfsf_x0)
 
         Ca_x, Ca_z, Cb_x, Cb_z, Da_x, Da_z, Db_x, Db_z = self.compute_fdtd_coeff()
 
@@ -628,7 +632,7 @@ class FDTD_TM_2D(object):
         # set up variables if there is a capture specified
         if self.capture is not None:
             start_capture, end_capture = self.capture["n_start"], self.capture["n_stop"]
-            rot_rad_s = np.deg2rad(self.capture["rotation"])
+            rot_rad_s = np.deg2rad(-self.capture["rotation"])
             mkwargs = dict(mode="constant", cval=0, order=3)
         
         for n in range(self.nmax-1):
@@ -749,7 +753,7 @@ class FDTD_TM_2D(object):
             for s in self.sources:
                 x_s = s["loc"][0].astype(int) - self.shift_x
                 z_s = s["loc"][2].astype(int)
-                if mw_border is not None and np.min(x_s) < mw_border:
+                if (np.min(x_s) < 0):
                     continue
 
                 ex[x_s, z_s] -= (self.dt / self.epsilon_ex[x_s, z_s]) * s["x"][n]

@@ -39,3 +39,21 @@ include = ["mw_fdtd"]
 
 [project.urls]
 repository = "https://github.com/ricklyon/mw_fdtd"
+
+[tool.black]
+line-length = 120
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | \.vscode
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''

@@ -18,36 +18,43 @@ dir_ = Path(__file__).parent
 np.set_printoptions(suppress=True, precision=4)
 
 # number of grid cells in full non-moving grid
-imax = 1000
-kmax = 500
+imax = 1300
+kmax = 450
 
 # number of grid cells in moving window 
-imax_mw = 350
-kmax_mw = 350
+imax_mw = 300
+kmax_mw = 300
 
 # number of time steps
-nmax = 1600
+nmax = 1700
 
 # center frequency and max frequency of source
 fmax = 3e9
 f0 = 2.5e9
 
-# initial rotation of moving window grid, around the y axis. Moving window will follow this
-# trajectory relative to the x axis.
-mw_rotation = 20
-# rotation for second moving window grid, relative to z axis
-mw_s_rotation = -20
+# initial rotation of moving window grid, around the y axis. Moving window will follow this trajectory.
+# y-axis is into the screen, so a negative rotation is counter-clockwise
+mw_rotation = -10
+# rotation for second moving window grid
+mw_s_rotation = 10
 
-# time step point to begin capturing fields in the moving window
-capture_n = 800
+# time step point to begin capturing fields in the moving window and transfer them to the 
+# secondary window
+capture_n = 1100
+
+# width of PML in all three grids
+d_pml = 20
+
+# boundary width on right edge of moving windows, energy within this region triggers a grid shift
+mw_border = 70
 
 # create full grid
 grid = FDTD_TM_2D(imax, kmax, nmax, fmax)
-# add discrete source centered at (150, 150)
-src_x, src_z, src_n = 150, 150, 240
+# add discrete source centered in the moving window grid
+src_x, src_z, src_n = kmax_mw // 2, kmax_mw // 2, 240
 grid.add_soft_source(f0, src_x, src_z, 240, 20, axis="z")
 # add PML layer on all 4 sides 
-grid.add_pml_all_sides(50)
+grid.add_pml_all_sides(d_pml)
 
 # create simple relative permittivity gradient in the z direction to cause a reflection
 er_gradient = np.ones(kmax)
@@ -63,10 +70,10 @@ mw_grid.set_er_profile(np.arange(kmax), er_gradient)
 mw_grid.rotate_grid(mw_rotation)
 # add identical discrete source as the full grid
 mw_grid.add_soft_source(f0, src_x, src_z, src_n, 20, axis="z")
-mw_grid.add_pml_all_sides(50)
-# set up a vertical line where the fields are captured, beginning at capture_n and continuing until nmax
-# the line is 60 cells away from the right edge of the grid, and is rotated.
-mw_grid.set_capture(capture_n, nmax, imax_mw - 60, rotation=mw_s_rotation)
+mw_grid.add_pml_all_sides(d_pml)
+# set up a vertical line where the fields are captured, beginning at capture_n and continuing until nmax.
+# the line is at moving window boundary of the grid, and is rotated.
+mw_grid.set_capture(capture_n, nmax, imax_mw - mw_border, rotation=2 * mw_s_rotation)
 
 # save fields from every 10 time steps in both the full grid and moving window
 n_step = 10
@@ -76,7 +83,7 @@ n_save = nmax // n_step
 ez_fg = np.zeros((n_save,) + grid.ez_shape, dtype=grid.dtype)
 ez_mw = np.zeros((n_save,) + mw_grid.ez_shape, dtype=grid.dtype)
 
-# also save the location of the moving window and it's border
+# also save the location of the moving window and its border
 mw_outline = []
 ez_loc = np.zeros((n_save, 3) + mw_grid.ez_shape, dtype=grid.dtype)
 
@@ -97,7 +104,7 @@ def func_mw(n, ex, ez, hy):
 # run the full grid and moving window, the mw_border defines how far from the right edge the energy is allowed
 # to get before triggering a grid shift
 grid.run(func_full)
-mw_grid.run(func_mw, mw_border=60)
+mw_grid.run(func_mw, mw_border=mw_border)
 
 # secondary moving window grid
 mw_grid_s = FDTD_TM_2D(imax_mw, kmax_mw, nmax, fmax)
@@ -115,7 +122,7 @@ mw_grid_s.add_tfsf_line_source(
     x0=imax_mw // 2, 
     window=windows.blackman
 )
-mw_grid_s.add_pml_all_sides(50)
+mw_grid_s.add_pml_all_sides(d_pml)
 
 # initialized saved field arrays for secondary moving window
 ez_mw_s = np.zeros((n_save,) + mw_grid_s.ez_shape, dtype=np.float32)
@@ -130,7 +137,7 @@ def func_mw_s(n, ex, ez, hy):
         mw_s_outline.append(mw_grid_s.get_grid_outline())
         ez_s_loc[n // n_step] = np.array(mw_grid_s.ez_loc)
 
-mw_grid_s.run(func_mw_s, mw_border=60)
+mw_grid_s.run(func_mw_s, mw_border=mw_border)
 
 # plots
 #%%
@@ -177,6 +184,17 @@ images = []
 pcm = []
 
 outline_ln = []
+
+# draw capture line in moving window grid
+ax2.plot(*mw_grid.capture["ez_loc"], linewidth=2, linestyle=":", color="k")
+
+# draw borders around mw plots with the same color as the windows in the full grid
+mw_xlim, mw_ylim = ax2.get_xlim(), ax2.get_ylim()
+for ax, c in zip((ax2, ax4), ("g", "r")):
+    ax.plot([0, imax_mw], [0, 0], color=c, linewidth=6)
+    ax.plot([0, imax_mw], [kmax_mw, kmax_mw], color=c, linewidth=6)
+    ax.plot([0, 0], [0, kmax_mw], color=c, linewidth=6)
+    ax.plot([imax_mw, imax_mw], [0, kmax_mw], color=c, linewidth=6)
 
 ez_fg_db = conv.db20_v(np.where(np.abs(ez_fg) < 1e-16, 1e-16, ez_fg))
 ez_mw_db = conv.db20_v(np.where(np.abs(ez_mw) < 1e-16, 1e-16, ez_mw))
@@ -226,7 +244,7 @@ for n in range(n_save):
     images.append(Image.open(buf))
 
 
-gifname = f"full_grid_comparison.gif"
+gifname = f"mw_comparison.gif"
 images[0].save(
     gifname,
     format="GIF",

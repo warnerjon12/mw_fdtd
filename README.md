@@ -1,6 +1,7 @@
 # mw-fdtd
 
-Moving window FDTD implementation (work in progress). Window can follow arbitrary paths through a geometry.
+Moving window FDTD implementation (work in progress). Window can follow arbitrary paths through a geometry (limited
+to 10 degree rotations at a time).
 
 ## Installation
 
@@ -42,8 +43,8 @@ def func_(n, ex, ez, hy):
 grid.run(func_, mw_border=60)
 ```
 
-The moving window moves only in the positive x direction. To follow arbitrary trajectories, the grid can be rotated around the y-axis.
-This rotates the permittivity gradient, and subsequent sources.
+The moving window moves only in the positive x direction. To follow arbitrary trajectories, the grid can be rotated around the y-axis. The y-axis points into the screen, so a positive rotation is clockwise.
+This rotates the permittivity gradient, and subsequent sources applied to the grid.
 ```python
-mw_grid.rotate_grid(45)
+mw_grid.rotate_grid(10)
 ```
