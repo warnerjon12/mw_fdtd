@@ -17,12 +17,6 @@ pip install -r requirements.txt
 import mw_fdtd
 ```
 
-This script demonstrates a simple moving window example and shows a side by side comparison with a non-moving grid,
-
-```bash
-python scripts/mw_comparison.py
-```
-
 A TM FDTD grid can be created with,
 ```python
 from mw_fdtd import FDTD_TM_2D
@@ -74,3 +68,11 @@ mw_grid_s.add_tfsf_line_source(
     x0=imax_mw // 2, 
 )
 ```
+
+## Examples
+This script demonstrates a simple moving window example and shows a side by side comparison with a non-moving grid,
+
+```bash
+python scripts/mw_comparison.py
+```
+![mw_comparison](https://raw.githubusercontent.com/ricklyon/mw_fdtd/main/scripts/mw_comparison.gif)
