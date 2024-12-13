@@ -38,8 +38,8 @@ def func_(n, ex, ez, hy):
         ez_fg[n // n_step] = ez
 
 # the mw_border parameters defines how 
-# many grid cells from the right edge field energy is allowed to 
-# extend before triggering a grid shift
+# many grid cells from the right edge field 
+# energy is allowed to extend before triggering a grid shift
 grid.run(func_, mw_border=60)
 ```
 
@@ -47,4 +47,30 @@ The moving window moves only in the positive x direction. To follow arbitrary tr
 This rotates the permittivity gradient, and subsequent sources applied to the grid.
 ```python
 mw_grid.rotate_grid(10)
+```
+
+To rotate the trajectory of the moving window, the fields are captured and re-introduced on another grid (with the geometry already rotated),
+```python
+mw_grid.set_capture(n_start, n_end, x0, rotation=10)
+```
+The `n_start` and `n_end` arguments are the time steps to begin and end the capture. The `x0` argument
+is the x coordinate of the vertical line to capture the fields on. This line is then rotated to match
+the change in trajectory.
+
+The fields can be mapped onto the next moving grid with,
+```python
+mw_grid_s = FDTD_TM_2D(imax_mw, kmax_mw, nmax, fmax)
+# rotate the permittivity geometry 
+mw_grid_s.rotate_grid(10)
+# secondary grid begins where the first moving window 
+# left off from, move to the grid center location of the
+# first moving window
+mw_grid_s.translate_grid_center(mw_grid.grid_center)
+# setup the TFSF line boundary (left edge only) using the 
+# data collected from the first moving window,
+mw_grid_s.add_tfsf_line_source(
+    mw_grid.capture["ez_data"], 
+    mw_grid.capture["hy_data"], 
+    x0=imax_mw // 2, 
+)
 ```
