@@ -71,6 +71,7 @@ class FDTD_TM_2D(object):
 
         self.grid_rotation = 0
         self.shift_x = 0
+        self.shift_z = 0
 
         # locations of field components in grid cell units
         # origin is the bottom left of grid.
@@ -298,37 +299,70 @@ class FDTD_TM_2D(object):
 
         self.grid_rotation = rotation
     
-    def shift_mw(self, shift_x: int):
+    def shift_mw(self, shift_x: int = 0, shift_z: int = 0):
         """
-        Shifts the FDTD grid to the right by shift_x. Must be an integer.
+        Shifts the FDTD grid to the right by shift_x and up by shift_z. Must be integers.
         """
 
         ang_rad = np.deg2rad(-self.grid_rotation)
-        step_x = np.cos(ang_rad) * shift_x
-        step_z = np.sin(ang_rad) * shift_x
+        step_x = np.cos(ang_rad) * shift_x - np.sin(ang_rad) * shift_z
+        step_z = np.sin(ang_rad) * shift_x + np.cos(ang_rad) * shift_z
 
         self.shift_x += shift_x
-        
+        self.shift_z += shift_z
+
         shift_v = np.array([step_x, 0, step_z])
         self.grid_center += shift_v
-        
+
         # increment the x and z location of each field
         self.ex_loc += shift_v[..., None, None]
         self.ez_loc += shift_v[..., None, None]
         self.hy_loc += shift_v[..., None, None]
 
-        # shift the permittivity values 
-        self.epsilon_ex[:-1] = self.epsilon_ex[1:]
-        self.epsilon_ez[:-1] = self.epsilon_ez[1:]
-        self.epsilon_hy[:-1] = self.epsilon_hy[1:]
+        if self.er_profile is None:
+            return
 
-        # use the er profile to get the values at the right edge of the grid where a new column of grid cells
-        # was introduced
-        if self.er_profile is not None:
-            profile, axis_idx = self.er_profile
-            self.epsilon_ex[-1] = profile(self.ex_loc[axis_idx, -1]) * e0
-            self.epsilon_ez[-1] = profile(self.ez_loc[axis_idx, -1]) * e0
-            self.epsilon_hy[-1] = profile(self.hy_loc[axis_idx, -1]) * e0
+        profile, axis_idx = self.er_profile
+
+        # shift the permittivity values
+        if shift_x > 0:
+            slice_xl = slice(None, -shift_x)
+            slice_xr = slice(shift_x, None)
+            slice_xnew = slice(-shift_x, None)
+        elif shift_x < 0:
+            slice_xr = slice(None, -shift_x)
+            slice_xl = slice(shift_x, None)
+            slice_xnew = slice(None, shift_x)
+        else:
+            slice_xl = slice(None)
+            slice_xr = slice(None)
+            slice_xnew = slice(None)
+
+        if shift_z > 0:
+            slice_zl = slice(None, -shift_z)
+            slice_zr = slice(shift_z, None)
+            slice_znew = slice(-shift_z, None)
+        elif shift_z < 0:
+            slice_zr = slice(None, -shift_z)
+            slice_zl = slice(shift_z, None)
+            slice_znew = slice(None, shift_z)
+        else:
+            slice_zl = slice(None)
+            slice_zr = slice(None)
+            slice_znew = slice(None)
+
+        slice_l = slice_xl if axis_idx == 2 else slice_zl
+        slice_r = slice_xr if axis_idx == 2 else slice_zr
+        slice_new = slice_xnew if axis_idx == 2 else slice_znew
+
+        for epsilon in (self.epsilon_ex, self.epsilon_ez, self.epsilon_hy):
+            epsilon[slice_l] = epsilon[slice_r]
+
+        # use the er profile to get the values at the edge of the grid where new cells were introduced
+        if (shift_x and axis_idx == 2) or (shift_z and axis_idx == 0):
+            self.epsilon_ex[slice_new] = profile(self.ex_loc[axis_idx, slice_new]) * e0
+            self.epsilon_ez[slice_new] = profile(self.ez_loc[axis_idx, slice_new]) * e0
+            self.epsilon_hy[slice_new] = profile(self.hy_loc[axis_idx, slice_new]) * e0
 
     def get_grid_outline(self):
         """
@@ -584,6 +618,55 @@ class FDTD_TM_2D(object):
             self.epsilon_ez = profile(self.ez_loc[axis_idx]) * e0
             self.epsilon_hy = profile(self.hy_loc[axis_idx]) * e0
 
+    def shift_if_needed(self, ez, ex, hyx, hyz, mw_border, rtol=2):
+        """
+        Shift the window one cell left/right and/or up/down, if needed.
+        dt ensures that energy can't make it from one cell to the next in a single time step,
+        so moving one cell at a time should keep the pulse in the window.
+
+        Returns shift_x, shift_z or None if no shift
+        """
+        # TODO adjust tfsf boundaries
+
+        energy_at_left = np.sum(np.sqrt(np.abs(ex[:mw_border,  1:])**2 + np.abs(ez[1:mw_border+1, :])**2))
+        energy_at_right = np.sum(np.sqrt(np.abs(ex[-mw_border:,  1:])**2 + np.abs(ez[-mw_border, :])**2))
+        energy_at_bottom = np.sum(np.sqrt(np.abs(ex[:,  1:mw_border+1])**2 + np.abs(ez[1:, :mw_border])**2))
+        energy_at_top = np.sum(np.sqrt(np.abs(ex[:,  -mw_border:])**2 + np.abs(ez[1:, -mw_border:])**2))
+
+        shift_x = 0
+        shift_z = 0
+
+        if energy_at_right > rtol*energy_at_left:
+            shift_x = 1
+
+            for field in (ez, ex, hyx, hyz):
+                field[:-1] = field[1:]
+                field[-1] = 0
+        elif energy_at_left > rtol*energy_at_right:
+            shift_x = -1
+
+            for field in (ez, ex, hyx, hyz):
+                field[1:] = field[:-1]
+                field[0] = 0
+
+        if energy_at_top > rtol*energy_at_bottom:
+            shift_z = 1
+
+            for field in (ez, ex, hyx, hyz):
+                field[:, :-1] = field[:, 1:]
+                field[:, -1] = 0
+        elif energy_at_bottom > rtol*energy_at_top:
+            shift_z = -1
+
+            for field in (ez, ex, hyx, hyz):
+                field[:, 1:] = field[:, :-1]
+                field[:, 0] = 0
+
+        if shift_x or shift_z:
+            self.shift_mw(shift_x, shift_z)
+            return shift_x, shift_z
+        return None
+
     def run(self, iter_func = None, mw_border=None):
         K_AXIS = 1
         I_AXIS = 0
@@ -648,47 +731,8 @@ class FDTD_TM_2D(object):
                 mw_border = None
 
             elif mw_border is not None:
-                energy_grid = np.sqrt(np.abs(ex[-mw_border:,  1:])**2 + np.abs(ez[-mw_border, :])**2)
-                energy_at_right = np.any(energy_grid > 1e-6)
-        
-                # shift window one cell to the right, dt ensures that energy can't make it from
-                # one cell to the next in a single time step, so moving one cell at a time should
-                # keep the pulse in the window
-                if energy_at_right:
-                    self.shift_mw(1)
+                if self.shift_if_needed(ez, ex, hyx, hyz, mw_border):
                     Ca_x, Ca_z, Cb_x, Cb_z, Da_x, Da_z, Db_x, Db_z = self.compute_fdtd_coeff()
-
-                    ez[:-1] = ez[1:]
-                    ez[-1] = 0
-                    hyx[:-1] = hyx[1:]
-                    hyx[-1] = 0
-                    hyz[:-1] = hyz[1:]
-                    hyz[-1] = 0
-                    ex[:-1] = ex[1:]
-                    ex[-1] = 0
-
-                    # shift tfsf boundaries
-                    tfsf_x0 -= 1
-                    tfsf_x1 -= 1
-
-                    if tfsf_x0 < 0:
-                        ez_left = None
-                        hy_left = None
-                        tfsf_x0 = 0
-                    if tfsf_x1 < 0:
-                        ez_right = None
-                        hy_right = None
-                        ex_btm = None
-                        ex_top = None
-                        hy_top = None
-                        hy_btm = None
-                        hy_left = None
-                        hy_right = None
-                        tfsf_x1 = 0
-
-                    # number of points to drop from the top and bottom boundary as it slides out of view
-                    h_tfsf_x_clip = tfsf_tf_x - (tfsf_x1 - tfsf_x0) - 1
-
 
             # # update the total/scattered field grid
             # compute h_y for the next half time step (n+0.5)
@@ -752,7 +796,7 @@ class FDTD_TM_2D(object):
             # soft sources
             for s in self.sources:
                 x_s = s["loc"][0].astype(int) - self.shift_x
-                z_s = s["loc"][2].astype(int)
+                z_s = s["loc"][2].astype(int) - self.shift_z
                 if (np.min(x_s) < 0):
                     continue
 
