@@ -34,13 +34,13 @@ f0 = 2.5e9
 
 # initial rotation of moving window grid, around the y axis. Moving window will follow this trajectory.
 # y-axis is into the screen, so a negative rotation is counter-clockwise
-mw_rotation = -10
+mw_rotation = 0
 # rotation for second moving window grid
-mw_s_rotation = 10
+mw_s_rotation = 0
 
 # time step point to begin capturing fields in the moving window and transfer them to the 
 # secondary window
-capture_n = 1100
+capture_n = nmax
 
 # width of PML in all three grids
 d_pml = 20
@@ -50,8 +50,8 @@ mw_border = 70
 
 # create full grid
 grid = FDTD_TM_2D(imax, kmax, nmax, fmax)
-# add discrete source centered in the moving window grid
-src_x, src_z, src_n = kmax_mw // 2, kmax_mw // 2, 240
+# add discrete source in the moving window grid
+src_x, src_z, src_n = kmax_mw // 2, 2 * kmax_mw // 3, 240
 grid.add_soft_source(f0, src_x, src_z, 240, 20, axis="z")
 # add PML layer on all 4 sides 
 grid.add_pml_all_sides(d_pml)
@@ -78,6 +78,7 @@ mw_grid.set_capture(capture_n, nmax, imax_mw - mw_border, rotation=2 * mw_s_rota
 # save fields from every 10 time steps in both the full grid and moving window
 n_step = 10
 n_save = nmax // n_step
+n_save_img = 100
 
 # initialize saved field arrays
 ez_fg = np.zeros((n_save,) + grid.ez_shape, dtype=grid.dtype)
@@ -105,39 +106,6 @@ def func_mw(n, ex, ez, hy):
 # to get before triggering a grid shift
 grid.run(func_full)
 mw_grid.run(func_mw, mw_border=mw_border)
-
-# secondary moving window grid
-mw_grid_s = FDTD_TM_2D(imax_mw, kmax_mw, nmax, fmax)
-mw_grid_s.set_er_profile(np.arange(kmax), er_gradient)
-# secondary grid begins where the first moving window left off from, move to the grid center location of the
-# first moving window
-mw_grid_s.translate_grid_center(mw_grid.grid_center)
-# rotate the grid 
-mw_grid_s.rotate_grid(mw_s_rotation)
-# setup the TFSF line boundary (left edge only) using the data collected from the first moving window,
-# set this source near the middle of the grid (the solver will correct for the delay)
-mw_grid_s.add_tfsf_line_source(
-    mw_grid.capture["ez_data"], 
-    mw_grid.capture["hy_data"], 
-    x0=imax_mw // 2, 
-    window=windows.blackman
-)
-mw_grid_s.add_pml_all_sides(d_pml)
-
-# initialized saved field arrays for secondary moving window
-ez_mw_s = np.zeros((n_save,) + mw_grid_s.ez_shape, dtype=np.float32)
-ez_s_loc = np.zeros((n_save, 3) + mw_grid_s.ez_shape, dtype=grid.dtype)
-mw_s_outline = []
-
-# save the secondary fields at each 10th time step
-def func_mw_s(n, ex, ez, hy):
-
-    if (n % n_step) == 0:
-        ez_mw_s[n // n_step] = ez
-        mw_s_outline.append(mw_grid_s.get_grid_outline())
-        ez_s_loc[n // n_step] = np.array(mw_grid_s.ez_loc)
-
-mw_grid_s.run(func_mw_s, mw_border=mw_border)
 
 # plots
 #%%
@@ -175,6 +143,11 @@ map = mpl.cm.ScalarMappable(norm=norm, cmap="terrain_r")
 fig.colorbar(map, ax=ax_cb, label="|Ez| [dB]", ticks=np.arange(-100, 20, 20))
 ax_cb.set_axis_off()
 
+cb_left = fig.colorbar(map, ax=ax_cb, label="Relative Error (%)", ticks=np.arange(-100, 20, 20))
+cb_left.set_ticklabels([f"{i}" for i in range(6)])
+cb_left.ax.yaxis.set_ticks_position('left')
+cb_left.ax.yaxis.set_label_position('left')
+
 ax1.set_aspect("equal")
 ax2.set_aspect("equal")
 ax3.set_aspect("equal")
@@ -198,7 +171,6 @@ for ax, c in zip((ax2, ax4), ("g", "r")):
 
 ez_fg_db = conv.db20_v(np.where(np.abs(ez_fg) < 1e-16, 1e-16, ez_fg))
 ez_mw_db = conv.db20_v(np.where(np.abs(ez_mw) < 1e-16, 1e-16, ez_mw))
-ez_mw_s_db = conv.db20_v(np.where(np.abs(ez_mw_s) < 1e-16, 1e-16, ez_mw_s))
 
 z_loc, x_loc = np.meshgrid(np.arange(ez_fg_db.shape[2]), np.arange(ez_fg_db.shape[1]))
 zw_loc, xw_loc = np.meshgrid(np.arange(ez_mw_db.shape[2]), np.arange(ez_mw_db.shape[1]))
@@ -215,30 +187,30 @@ for n in range(n_save):
     pcm1 = ax1.pcolormesh(x_loc, z_loc, ez_fg_db[n], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
 
     pcm2 = ax2.pcolormesh(xw_loc, zw_loc, ez_mw_db[n], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
-    if n_s >= 0:
-        pcm4 = ax4.pcolormesh(xw_loc, zw_loc, ez_mw_s_db[n_s], vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
-        outline_ln += [ax1.plot(w[0], w[2], color="r", linewidth=2)[0] for w in mw_s_outline[n_s]]
-        pcm.append(pcm4)
 
-        mw_field = get_window_fields(ez_fg_db[n], ez_s_loc[n_s])
-        
-    else:
-        outline_ln += [ax1.plot(w[0], w[2], color="r", linewidth=2)[0] for w in mw_s_outline[0]]
-        mw_field = get_window_fields(ez_fg_db[n], ez_loc[n])
+    mw_field = get_window_fields(ez_fg[n], ez_loc[n])
+    mw_field_db = get_window_fields(ez_fg_db[n], ez_loc[n])
+
+    rel_err = abs(ez_mw[n] - mw_field) / np.max(abs(mw_field))
+    rel_err = -100+20*np.minimum(100*rel_err, 5)
+
+    pcm4 = ax4.pcolormesh(xw_loc, zw_loc, rel_err, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
 
     outline_ln += [ax1.plot(w[0], w[2], color="g", linewidth=2)[0] for w in mw_outline[n]]
 
-    pcm3 = ax3.pcolormesh(xw_loc, zw_loc, mw_field, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
+    pcm3 = ax3.pcolormesh(xw_loc, zw_loc, mw_field_db, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
     
     pcm.append(pcm1)
     pcm.append(pcm2)
     pcm.append(pcm3)
-    
+    pcm.append(pcm4)
 
     buf = io.BytesIO()
 
     ax1.set_title("n={}".format(n * n_step))
     fig.savefig(buf, format="png")
+    if (n * n_step) % n_save_img == 0:
+        fig.savefig(f'Snapshots/{n * n_step}.png')
     plt.close("all")
 
     images.append(Image.open(buf))
