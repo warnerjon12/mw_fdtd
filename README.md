@@ -1,23 +1,25 @@
 # mw-fdtd
 
-Moving window FDTD implementation (work in progress). Window can follow arbitrary paths through a geometry (limited
-to 10 degree rotations at a time).
+Moving window FDTD implementation (work in progress). Window can follow arbitrary paths
+by moving independently in the x and z directions. This avoids the need to transfer
+fields between different windows. Movement direction is determined based on energy
+movement near the edges of the grid.
 
 ## Installation
 
-Requires Python 3.11. In the top level directory, install the python dependencies with,
+Requires Python 3.11. In the top level directory, install the python dependencies with
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
+## Basic Usage
 
 ```python
 import mw_fdtd
 ```
 
-A TM FDTD grid can be created with,
+A TM FDTD grid can be created with
 ```python
 from mw_fdtd import FDTD_TM_2D
 grid = FDTD_TM_2D(imax, kmax, nmax, fmax)
@@ -31,19 +33,24 @@ def func_(n, ex, ez, hy):
     if (n % n_step) == 0:
         ez_fg[n // n_step] = ez
 
-# the mw_border parameters defines how 
-# many grid cells from the right edge field 
-# energy is allowed to extend before triggering a grid shift
+# the mw_border parameter defines how 
+# many grid cells from the field edges
+# are used in determining when and where to shift the grid
 grid.run(func_, mw_border=60)
 ```
 
-The moving window moves only in the positive x direction. To follow arbitrary trajectories, the grid can be rotated around the y-axis. The y-axis points into the screen, so a positive rotation is clockwise.
+## Rotation
+
+### This does not currently work correctly with shifts in the z direction, and is not recommended.
+### TFSF sources are also not correctly updated with shifts in the current implementation.
+
+The grid can be rotated around the y-axis. The y-axis points into the screen, so a positive rotation is clockwise.
 This rotates the permittivity gradient, and subsequent sources applied to the grid.
 ```python
 mw_grid.rotate_grid(10)
 ```
 
-To rotate the trajectory of the moving window, the fields are captured and re-introduced on another grid (with the geometry already rotated),
+To rotate the trajectory of the moving window, fields can be captured and re-introduced on another grid (with the geometry already rotated)
 ```python
 mw_grid.set_capture(n_start, n_end, x0, rotation=10)
 ```
@@ -71,8 +78,9 @@ mw_grid_s.add_tfsf_line_source(
 
 ## Examples
 This script demonstrates a simple moving window example and shows a side by side comparison with a non-moving grid,
+as well as the relative error in the moving window.
 
 ```bash
 python scripts/mw_comparison.py
 ```
-![mw_comparison](https://raw.githubusercontent.com/ricklyon/mw_fdtd/main/scripts/mw_comparison.gif)
+![mw_comparison](https://raw.githubusercontent.com/warnerjon12/mw_fdtd/main/scripts/mw_comparison.gif)
