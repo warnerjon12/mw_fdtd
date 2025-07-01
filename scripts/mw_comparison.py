@@ -143,8 +143,8 @@ map = mpl.cm.ScalarMappable(norm=norm, cmap="terrain_r")
 fig.colorbar(map, ax=ax_cb, label="|Ez| [dB]", ticks=np.arange(-100, 20, 20))
 ax_cb.set_axis_off()
 
-cb_left = fig.colorbar(map, ax=ax_cb, label="Relative Error (%)", ticks=np.arange(-100, 20, 20))
-cb_left.set_ticklabels([f"{i}" for i in range(6)])
+cb_left = fig.colorbar(map, ax=ax_cb, label="Relative Error", ticks=np.arange(-100, 20, 20))
+cb_left.set_ticklabels([f"$10^{{{i}}}$" for i in range(-5, 0)]+["1"])
 cb_left.ax.yaxis.set_ticks_position('left')
 cb_left.ax.yaxis.set_label_position('left')
 
@@ -192,7 +192,7 @@ for n in range(n_save):
     mw_field_db = get_window_fields(ez_fg_db[n], ez_loc[n])
 
     rel_err = abs(ez_mw[n] - mw_field) / np.max(abs(mw_field))
-    rel_err = -100+20*np.minimum(100*rel_err, 5)
+    rel_err = conv.db20_v(np.where(np.abs(rel_err) < 1e-16, 1e-16, rel_err))
 
     pcm4 = ax4.pcolormesh(xw_loc, zw_loc, rel_err, vmin=-100, vmax=0, shading='nearest', cmap="terrain_r")
 
